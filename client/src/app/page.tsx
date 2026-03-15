@@ -18,6 +18,7 @@ export default async function Home() {
             This page displays live system information returned by the Node.js
             server.
           </p>
+          <h1>By Ami Kahlon</h1>
         </div>
 
         <SystemInfoGrid systemInfo={systemInfo} />
