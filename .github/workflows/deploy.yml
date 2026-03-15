@@ -1,0 +1,84 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION:   eu-central-1
+  PROJECT_NAME: system-info-app
+
+jobs:
+  deploy:
+    name: Build → Push → Deploy
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write   # required for OIDC
+      contents: read
+
+    steps:
+      # ── Checkout ───────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── AWS credentials via OIDC (no long-lived secrets) ───────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      # ── ECR login ──────────────────────────────────────────────────────────
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── Resolve image tags & names ─────────────────────────────────────────
+      - name: Set image metadata
+        id: meta
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          TAG=${{ github.sha }}
+          echo "tag=$TAG"                                                              >> $GITHUB_OUTPUT
+          echo "client_image=${REGISTRY}/${PROJECT_NAME}-client:${TAG}"               >> $GITHUB_OUTPUT
+          echo "server_image=${REGISTRY}/${PROJECT_NAME}-server:${TAG}"               >> $GITHUB_OUTPUT
+
+      # ── Read ALB DNS from SSM (needed as a build-arg for the client) ───────
+      - name: Get ALB DNS
+        id: alb
+        run: |
+          dns=$(aws ssm get-parameter \
+            --name "/${PROJECT_NAME}/alb-dns" \
+            --query "Parameter.Value" \
+            --output text)
+          echo "dns=$dns" >> $GITHUB_OUTPUT
+
+      # ── Build & push server ────────────────────────────────────────────────
+      - name: Build & push server
+        run: |
+          docker build \
+            -t ${{ steps.meta.outputs.server_image }} \
+            ./server
+          docker push ${{ steps.meta.outputs.server_image }}
+
+      # ── Build & push client ────────────────────────────────────────────────
+      - name: Build & push client
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_BASE_URL=http://${{ steps.alb.outputs.dns }} \
+            -t ${{ steps.meta.outputs.client_image }} \
+            ./client
+          docker push ${{ steps.meta.outputs.client_image }}
+
+      # ── Update Launch Template + trigger Instance Refresh ──────────────────
+      - name: Deploy to ASG
+        run: |
+          chmod +x ./scripts/refresh-asg.sh
+          ./scripts/refresh-asg.sh \
+            "${{ env.AWS_REGION }}"                          \
+            "${{ env.PROJECT_NAME }}"                        \
+            "${{ steps.ecr.outputs.registry }}"             \
+            "${{ steps.meta.outputs.client_image }}"        \
+            "${{ steps.meta.outputs.server_image }}"

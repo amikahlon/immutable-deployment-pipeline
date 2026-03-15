@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+  server:
+    build:
+      context: ./server
+    container_name: system-info-server
+    ports:
+      - "4000:4000"
+
+  client:
+    build:
+      context: ./client
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://server:4000
+    container_name: system-info-client
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server
