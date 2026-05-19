@@ -19,6 +19,7 @@ export default async function Home() {
             server.
           </p>
           <h1>By Ami Kahlon</h1>
+          <h1>Ami Ami</h1>
         </div>
 
         <SystemInfoGrid systemInfo={systemInfo} />
